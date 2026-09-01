@@ -35,7 +35,13 @@ preset, build type and flavor. The workflow:
    publish it,
 4. clones the pinned Eden commit and applies `patches/` with `git am`,
 5. runs Eden's own `.ci/android/build.sh`,
-6. uploads `artifacts/*.apk` and `artifacts/*.aab`.
+6. uploads `artifacts/*.apk` and `artifacts/*.aab` as a workflow artifact,
+7. publishes them to a GitHub Release tagged `apk-<preset>-<build-type>`,
+   renamed to `eden-mali-<preset>-<build-type>-<eden-commit>.apk`.
+
+The release is a rolling one: re-running the workflow with the same preset and
+build type replaces the assets on that tag rather than creating a new release.
+Publishing needs `contents: write`, which the workflow requests.
 
 Expect a cold build to take a long time; `ccache` is cached between runs, so
 re-runs on the same pin are much faster.

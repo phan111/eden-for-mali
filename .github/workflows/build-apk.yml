@@ -28,11 +28,11 @@ on:
       - "scripts/**"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: build-apk-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   apk:
@@ -159,6 +159,69 @@ jobs:
             eden-src/artifacts/*.aab
           if-no-files-found: warn
           retention-days: 30
+
+      # Keep the APK on the repository itself: workflow artifacts expire and need
+      # a signed-in visit to the Actions tab, a release asset is a direct download.
+      - name: Publish APK to a GitHub Release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          eden_commit="$(sed -n 's/^EDEN_COMMIT=//p' eden-source.pin)"
+          eden_short="${eden_commit:0:9}"
+          tag="apk-${PRESET}-${BUILD_TYPE}"
+          title="Eden Mali APK - ${PRESET} (${BUILD_TYPE})"
+
+          # Name the assets after what they actually are, not "app-mainline-release".
+          mkdir -p release
+          for f in eden-src/artifacts/*.apk eden-src/artifacts/*.aab; do
+            [ -e "$f" ] || continue
+            base="$(basename "$f")"
+            cp "$f" "release/eden-mali-${PRESET}-${BUILD_TYPE}-${eden_short}.${base##*.}"
+          done
+          ls -lh release/
+
+          {
+            echo "Eden built for Arm Mali / Immortalis GPUs, targeting the Galaxy Tab S11 / S11 Ultra."
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| build preset | \`${PRESET}\` |"
+            echo "| build type | \`${BUILD_TYPE}\` |"
+            echo "| flavor | \`${FLAVOR}\` |"
+            echo "| Eden commit | \`${eden_commit}\` |"
+            echo "| patches applied | $(grep -cvE '^[[:space:]]*(#|$)' patches/series) |"
+            echo "| built | $(date -u '+%Y-%m-%d %H:%M') UTC |"
+            echo
+            echo "Signed with Eden's checked-in debug key, so it installs alongside an"
+            echo "official Eden build instead of replacing it."
+            echo
+            if [ "${PRESET}" = "armv9-x925" ] || [ "${PRESET}" = "armv9" ]; then
+              echo "**This build requires Armv9 hardware** (Galaxy Tab S11, Dimensity 9400+ and"
+              echo "similar). It will not start on older devices - build the \`optimized\` or"
+              echo "\`generic\` preset for those."
+              echo
+            fi
+            echo "See [docs/TAB-S11-TUNING.md](../blob/${GITHUB_REF_NAME}/docs/TAB-S11-TUNING.md)"
+            echo "for recommended in-app settings, and [docs/FINDINGS.md](../blob/${GITHUB_REF_NAME}/docs/FINDINGS.md)"
+            echo "for what was changed and why."
+            echo
+            echo "Eden ships no Nintendo code, keys, firmware or games."
+          } > release-notes.md
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
+              --title "$title" --notes-file release-notes.md
+          else
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+              --title "$title" --notes-file release-notes.md \
+              --target "$GITHUB_SHA" --prerelease
+          fi
+          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber release/*
+
+          echo "### APK published to release \`$tag\`" >> "$GITHUB_STEP_SUMMARY"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json url --jq .url >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload build logs on failure
         if: failure()

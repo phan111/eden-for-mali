@@ -35,10 +35,16 @@ patching Eden — see [`docs/TAB-S11-TUNING.md`](docs/TAB-S11-TUNING.md).
 
 ## Getting an APK
 
-**From CI (recommended).** Actions → *Build Eden APK (Mali / Galaxy Tab S11)* →
-*Run workflow*. Pick a preset and build type; the APK and AAB are uploaded as a
-build artifact. The APK is signed with Eden's checked-in debug key, so it
-installs alongside an official Eden build rather than replacing it.
+**From the repository's Releases.** Every successful build publishes the APK to
+a release tagged `apk-<preset>-<build-type>` — for the Tab S11 target that is
+[`apk-armv9-x925-Release`](../../releases/tag/apk-armv9-x925-Release). Release
+assets are a direct download and do not expire, unlike workflow artifacts.
+
+**Building a fresh one.** Actions → *Build Eden APK (Mali / Galaxy Tab S11)* →
+*Run workflow*. Pick a preset and build type; the APK and AAB are attached to
+the matching release and also uploaded as a workflow artifact. The APK is signed
+with Eden's checked-in debug key, so it installs alongside an official Eden
+build rather than replacing it.
 
 **Locally.**
 

@@ -49,9 +49,14 @@ Qualcomm โดยเฉพาะ (ส่วนที่ใช้ compute shader
 
 ## วิธีเอาไฟล์ APK
 
-**จาก CI (แนะนำ)** — ไปที่แท็บ Actions → *Build Eden APK (Mali / Galaxy Tab S11)*
-→ *Run workflow* เลือก preset กับ build type แล้วรอ ไฟล์ APK และ AAB
-จะขึ้นเป็น artifact ให้ดาวน์โหลด
+**จาก Releases ของ repo (ง่ายสุด)** — ทุกครั้งที่ build สำเร็จ CI จะเอา APK
+ไปแปะไว้ที่ release tag `apk-<preset>-<build-type>` เช่นตัวสำหรับ Tab S11 คือ
+[`apk-armv9-x925-Release`](../../releases/tag/apk-armv9-x925-Release)
+ไฟล์ใน release ดาวน์โหลดตรงได้และไม่หมดอายุ (ต่างจาก artifact ที่หมดอายุ)
+
+**อยาก build ใหม่** — ไปที่แท็บ Actions → *Build Eden APK (Mali / Galaxy Tab S11)*
+→ *Run workflow* เลือก preset กับ build type แล้วรอ ไฟล์จะไปทั้งใน release
+และ artifact
 
 APK จะถูก sign ด้วย debug key ที่มาพร้อม Eden จึงติดตั้งได้เลย และอยู่แยกกับ
 Eden ตัวจริงที่ลงไว้ (ไม่ทับกัน)
