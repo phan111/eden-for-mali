@@ -1,0 +1,59 @@
+From 436e1f4de54266c56bca2f5ca269d2536999199d Mon Sep 17 00:00:00 2001
+From: eden-for-mali <chatpimookt@gmail.com>
+Date: Tue, 1 Sep 2026 13:10:57 +0000
+Subject: [PATCH 1/2] [cmake] add armv9-x925 arm64 build preset
+
+Adds a build preset tuned for Armv9.2 flagship mobile SoCs whose prime core
+is a Cortex-X925, such as the MediaTek Dimensity 9400/9400+ found in the
+Galaxy Tab S11 and S11 Ultra.
+
+The preset raises the ISA baseline to armv9-a and asks the compiler to
+schedule for the prime core. -mtune never affects instruction selection, so
+it remains correct across the big.LITTLE cluster, and the -mtune value is
+probed with check_cxx_compiler_flag so toolchains that do not know the core
+fall back to generic tuning instead of failing to configure.
+
+Binaries built with this preset require Armv9 hardware.
+---
+ CMakeLists.txt | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index cbcdacc..53b2fbb 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -340,7 +340,7 @@ if (CXX_GCC OR CXX_CLANG)
+         endif()
+     elseif(ARCHITECTURE_arm64)
+         # See https://gcc.gnu.org/onlinedocs/gcc/AArch64-Options.html
+-        set(YUZU_BUILD_PRESET "custom" CACHE STRING "Build preset to use. One of: custom, generic, optimized, armv9, native")
++        set(YUZU_BUILD_PRESET "custom" CACHE STRING "Build preset to use. One of: custom, generic, optimized, armv9, armv9-x925, native")
+         set(mtune generic)
+         if (${YUZU_BUILD_PRESET} STREQUAL "generic")
+             set(march armv8-a)
+@@ -348,6 +348,25 @@ if (CXX_GCC OR CXX_CLANG)
+             set(march armv8.2-a+lse+rcpc)
+         elseif (${YUZU_BUILD_PRESET} STREQUAL "armv9")
+             set(march armv9-a)
++        elseif (${YUZU_BUILD_PRESET} STREQUAL "armv9-x925")
++            # Tuned for Armv9.2 flagship mobile SoCs whose prime core is a
++            # Cortex-X925 -- among them the MediaTek Dimensity 9400/9400+ used by
++            # the Galaxy Tab S11 and S11 Ultra (Cortex-X925 + Cortex-X4 +
++            # Cortex-A725, paired with an Arm Immortalis-G925 GPU).
++            #
++            # -march raises the ISA baseline, so a binary built with this preset
++            # will NOT run on pre-Armv9 hardware. -mtune only steers instruction
++            # scheduling and never instruction selection, so tuning for the prime
++            # core stays correct on the smaller cores of the same cluster.
++            set(march armv9-a)
++            include(CheckCXXCompilerFlag)
++            check_cxx_compiler_flag("-mtune=cortex-x925" YUZU_HAS_MTUNE_CORTEX_X925)
++            if (YUZU_HAS_MTUNE_CORTEX_X925)
++                set(mtune cortex-x925)
++            else()
++                message(STATUS "Compiler does not recognise -mtune=cortex-x925, tuning generically")
++                set(mtune generic)
++            endif()
+         endif()
+     endif()
+ 

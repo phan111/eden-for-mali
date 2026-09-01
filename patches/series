@@ -1,0 +1,3 @@
+# Applied in this order by scripts/prepare-source.sh (git am).
+0001-cmake-add-armv9-x925-arm64-build-preset.patch
+0002-video_core-identify-the-Arm-proprietary-driver-in-GP.patch

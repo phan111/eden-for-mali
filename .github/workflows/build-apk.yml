@@ -1,0 +1,172 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Build Eden APK (Mali / Galaxy Tab S11)
+
+on:
+  workflow_dispatch:
+    inputs:
+      preset:
+        description: "arm64 build preset (YUZU_BUILD_PRESET)"
+        type: choice
+        default: armv9-x925
+        options: [armv9-x925, armv9, optimized, generic, custom]
+      build_type:
+        description: "Native/Gradle build type"
+        type: choice
+        default: Release
+        options: [Release, RelWithDebInfo]
+      flavor:
+        description: "Eden product flavor"
+        type: choice
+        default: standard
+        options: [standard, legacy, optimized]
+  push:
+    branches: [claude/gpu-mali-galaxy-tab-s11-3s6chv]
+    paths:
+      - "patches/**"
+      - "eden-source.pin"
+      - ".github/workflows/build-apk.yml"
+      - "scripts/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    env:
+      PRESET: ${{ inputs.preset || 'armv9-x925' }}
+      BUILD_TYPE: ${{ inputs.build_type || 'Release' }}
+      FLAVOR: ${{ inputs.flavor || 'standard' }}
+      # Pinned by src/android/app/build.gradle.kts (externalNativeBuild.cmake.version).
+      CMAKE_VERSION: 3.31.6
+      NDK_VERSION: 28.2.13676358
+      CCACHE: "true"
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Reclaim runner disk space
+        run: |
+          echo "before:"; df -h / | tail -1
+          sudo rm -rf /usr/local/lib/android/sdk/ndk \
+                      /usr/share/dotnet /usr/local/lib/node_modules \
+                      /opt/ghc /usr/local/share/boost /usr/local/graalvm \
+                      /usr/local/share/powershell /usr/local/share/chromium \
+                      /usr/local/lib/heroku "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}/CodeQL" || true
+          sudo apt-get -qq purge -y firefox google-chrome-stable microsoft-edge-stable 2>/dev/null || true
+          sudo apt-get -qq autoremove -y || true
+          docker image prune -af >/dev/null 2>&1 || true
+          echo "after:"; df -h / | tail -1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install build prerequisites
+        run: sudo apt-get -qq update && sudo apt-get -qq install -y ccache ninja-build glslang-tools
+
+      # Eden pins an exact CMake version. AGP resolves it from
+      # $ANDROID_SDK_ROOT/cmake/<version>/bin, which the SDK repository does not
+      # publish, so install the upstream release into that layout.
+      - name: Install CMake ${{ env.CMAKE_VERSION }}
+        run: |
+          set -eux
+          url="https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz"
+          curl -fsSL --retry 4 --retry-delay 5 -o /tmp/cmake.tar.gz "$url"
+          dest="${ANDROID_SDK_ROOT}/cmake/${CMAKE_VERSION}"
+          sudo mkdir -p "$dest"
+          sudo tar -xzf /tmp/cmake.tar.gz -C "$dest" --strip-components=1
+          "$dest/bin/cmake" --version
+          echo "$dest/bin" >> "$GITHUB_PATH"
+
+      - name: Install Android SDK packages
+        run: |
+          set -eux
+          sdkmanager="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          yes 2>/dev/null | "$sdkmanager" --licenses >/dev/null || true
+          "$sdkmanager" --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;${NDK_VERSION}"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: eden-mali-ccache-${{ env.PRESET }}-${{ env.BUILD_TYPE }}-${{ hashFiles('eden-source.pin', 'patches/**') }}
+          restore-keys: |
+            eden-mali-ccache-${{ env.PRESET }}-${{ env.BUILD_TYPE }}-
+            eden-mali-ccache-${{ env.PRESET }}-
+
+      - name: Clone Eden and apply the Mali patch series
+        run: ./scripts/prepare-source.sh "${GITHUB_WORKSPACE}/eden-src"
+
+      - name: Give Gradle more metaspace
+        working-directory: eden-src
+        run: |
+          {
+            echo ""
+            echo "# raised by eden-for-mali CI (R8 + a large native build)"
+            echo "org.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1536m -Dfile.encoding=UTF-8"
+          } >> src/android/gradle.properties
+
+      - name: Build APK
+        working-directory: eden-src
+        env:
+          CCACHE_DIR: ~/.ccache
+          CCACHE_MAXSIZE: 4G
+        run: |
+          set -eux
+          ccache -z || true
+          chmod +x .ci/android/build.sh src/android/gradlew
+          ./.ci/android/build.sh \
+            -t "${FLAVOR}" \
+            -b "${BUILD_TYPE}" \
+            -DYUZU_BUILD_PRESET="${PRESET}"
+          ccache -s || true
+
+      - name: Describe artifacts
+        if: always()
+        working-directory: eden-src
+        run: |
+          ls -lh artifacts/ 2>/dev/null || echo "no artifacts directory"
+          for apk in artifacts/*.apk; do
+            [ -e "$apk" ] || continue
+            echo "== $apk"
+            "${ANDROID_SDK_ROOT}/build-tools/36.0.0/aapt2" dump badging "$apk" 2>/dev/null \
+              | grep -E "^package|sdkVersion|targetSdkVersion|native-code" || true
+          done
+
+      - name: Upload APK / AAB
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eden-mali-${{ env.PRESET }}-${{ env.BUILD_TYPE }}
+          path: |
+            eden-src/artifacts/*.apk
+            eden-src/artifacts/*.aab
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ env.PRESET }}-${{ env.BUILD_TYPE }}
+          path: |
+            eden-src/src/android/app/.cxx/**/*.log
+            eden-src/src/android/app/build/outputs/logs/**
+          if-no-files-found: ignore
+          retention-days: 7

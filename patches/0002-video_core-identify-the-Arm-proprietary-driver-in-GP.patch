@@ -1,0 +1,85 @@
+From a898447d6edfce99d5cc85bff305fcef1869a42f Mon Sep 17 00:00:00 2001
+From: eden-for-mali <chatpimookt@gmail.com>
+Date: Tue, 1 Sep 2026 13:10:57 +0000
+Subject: [PATCH 2/2] [video_core] identify the Arm proprietary driver in GPU
+ logging
+
+GPU logging could label Turnip and the Qualcomm proprietary driver but fell
+back to "Unknown" on Arm's proprietary Mali/Immortalis driver, even though
+the Vulkan backend already special-cases VK_DRIVER_ID_ARM_PROPRIETARY in the
+query, buffer and pipeline caches. Add a Mali driver type and detect it in
+InitializeGPULogging so GPU logs and crash dumps name the driver.
+
+Also record why VK_DRIVER_ID_ARM_PROPRIETARY is absent from
+Device::ShouldBoostClocks(): on Android TurboMode raises clocks only through
+adrenotools_set_turbo(), which is Adreno-only, and the portable
+compute-shader path is compiled out under __ANDROID__. Listing Arm there
+would spawn a thread that burns power without raising Mali clocks.
+---
+ src/video_core/gpu_logging/gpu_logging.cpp     | 6 ++++++
+ src/video_core/gpu_logging/gpu_logging.h       | 1 +
+ src/video_core/vulkan_common/vulkan_device.cpp | 8 ++++++++
+ 3 files changed, 15 insertions(+)
+
+diff --git a/src/video_core/gpu_logging/gpu_logging.cpp b/src/video_core/gpu_logging/gpu_logging.cpp
+index c7c3c41..3217c1a 100644
+--- a/src/video_core/gpu_logging/gpu_logging.cpp
++++ b/src/video_core/gpu_logging/gpu_logging.cpp
+@@ -83,6 +83,9 @@ void GPULogger::Initialize(LogLevel level, DriverType driver) {
+     case DriverType::Qualcomm:
+         driver_name = "Qualcomm Proprietary";
+         break;
++    case DriverType::Mali:
++        driver_name = "Arm Proprietary (Mali / Immortalis)";
++        break;
+     default:
+         driver_name = "Unknown";
+         break;
+@@ -599,6 +602,9 @@ void GPULogger::DumpStateToFile(const std::string& crash_reason) {
+     case DriverType::Qualcomm:
+         driver_name = "Qualcomm Proprietary";
+         break;
++    case DriverType::Mali:
++        driver_name = "Arm Proprietary (Mali / Immortalis)";
++        break;
+     default:
+         driver_name = "Unknown";
+         break;
+diff --git a/src/video_core/gpu_logging/gpu_logging.h b/src/video_core/gpu_logging/gpu_logging.h
+index b16988e..216b988 100644
+--- a/src/video_core/gpu_logging/gpu_logging.h
++++ b/src/video_core/gpu_logging/gpu_logging.h
+@@ -38,6 +38,7 @@ enum class DriverType : u8 {
+     Unknown,
+     Turnip,   // Mesa Turnip driver
+     Qualcomm, // Qualcomm proprietary driver
++    Mali,     // Arm proprietary driver (Mali / Immortalis)
+ };
+ 
+ // Ring buffer entry for tracking Vulkan API calls
+diff --git a/src/video_core/vulkan_common/vulkan_device.cpp b/src/video_core/vulkan_common/vulkan_device.cpp
+index 9c0bc56..6652e7a 100644
+--- a/src/video_core/vulkan_common/vulkan_device.cpp
++++ b/src/video_core/vulkan_common/vulkan_device.cpp
+@@ -868,6 +868,12 @@ bool Device::ShouldBoostClocks() const {
+     const auto vendor_id = properties.properties.vendorID;
+     const auto device_id = properties.properties.deviceID;
+ 
++    // NOTE: VK_DRIVER_ID_ARM_PROPRIETARY (Mali / Immortalis) is deliberately absent.
++    // On Android TurboMode::Run() boosts clocks exclusively through
++    // adrenotools_set_turbo(), which drives Adreno's KGSL interface; the portable
++    // compute-shader keep-busy path is compiled out under __ANDROID__. Listing Arm
++    // here would therefore only spawn a thread that cannot raise Mali clocks, while
++    // still burning power. Do not add it without giving Android a real Mali path.
+     const bool validated_driver =
+         driver_id == VK_DRIVER_ID_AMD_PROPRIETARY || driver_id == VK_DRIVER_ID_AMD_OPEN_SOURCE ||
+         driver_id == VK_DRIVER_ID_MESA_RADV || driver_id == VK_DRIVER_ID_NVIDIA_PROPRIETARY ||
+@@ -1611,6 +1617,8 @@ void Device::InitializeGPULogging() {
+         detected_driver = GPU::Logging::DriverType::Turnip;
+     } else if (driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY) {
+         detected_driver = GPU::Logging::DriverType::Qualcomm;
++    } else if (driver_id == VK_DRIVER_ID_ARM_PROPRIETARY) {
++        detected_driver = GPU::Logging::DriverType::Mali;
+     }
+ 
+     // Initialize GPU logger

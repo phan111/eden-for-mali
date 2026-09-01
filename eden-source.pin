@@ -1,0 +1,11 @@
+# Upstream Eden revision this patch series is developed and tested against.
+#
+# Eden's canonical home is https://git.eden-emu.dev/eden-emu/eden. That host is
+# not reachable from every CI network, so the pin below names a GitHub mirror of
+# the same history; EDEN_COMMIT is a plain upstream commit and is identical in
+# both remotes.
+EDEN_UPSTREAM_URL=https://git.eden-emu.dev/eden-emu/eden
+EDEN_MIRROR_URL=https://github.com/SchweGELBin/eden
+EDEN_COMMIT=c0a85d0e538e04fb56b0f7ca561422119b9f526f
+EDEN_COMMIT_DATE=2026-08-29
+EDEN_BRANCH=master
