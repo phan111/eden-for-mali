@@ -21,10 +21,11 @@ on:
         options: [standard, legacy, optimized]
   push:
     branches: [claude/gpu-mali-galaxy-tab-s11-3s6chv]
+    # Deliberately excludes the workflow file itself: editing CI should not spend
+    # an hour of runner time rebuilding. Use workflow_dispatch for that.
     paths:
       - "patches/**"
       - "eden-source.pin"
-      - ".github/workflows/build-apk.yml"
       - "scripts/**"
 
 permissions:
@@ -47,6 +48,7 @@ jobs:
       CMAKE_VERSION: 3.31.6
       NDK_VERSION: 28.2.13676358
       CCACHE: "true"
+      CCACHE_MAXSIZE: 4G
 
     steps:
       - name: Checkout this repository
@@ -101,6 +103,13 @@ jobs:
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
+      # $HOME cannot be resolved in a job-level env: block, so export CCACHE_DIR
+      # from a shell where it can be.
+      - name: Configure ccache
+        run: |
+          echo "CCACHE_DIR=${HOME}/.ccache" >> "$GITHUB_ENV"
+          mkdir -p "${HOME}/.ccache"
+
       - name: Restore ccache
         uses: actions/cache@v4
         with:
@@ -124,9 +133,6 @@ jobs:
 
       - name: Build APK
         working-directory: eden-src
-        env:
-          CCACHE_DIR: ~/.ccache
-          CCACHE_MAXSIZE: 4G
         run: |
           set -eux
           ccache -z || true
