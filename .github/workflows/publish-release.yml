@@ -1,0 +1,133 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Attach an APK that a previous "Build Eden APK" run already produced to a
+# GitHub Release, without recompiling Eden (a full build is about an hour).
+#
+# Needs the repository's Actions token to be writable:
+#   Settings -> Actions -> General -> Workflow permissions
+#     -> "Read and write permissions"
+name: Publish APK to a Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run id of the Build Eden APK run to publish (see its URL)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark the release as a prerelease"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Download the build's artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p downloaded
+          # The build job names its artifact eden-mali-<preset>-<build-type>; take
+          # whatever that run produced rather than assuming a preset here.
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --dir downloaded
+          find downloaded -type f \( -name '*.apk' -o -name '*.aab' \) -print
+
+          count=$(find downloaded -type f \( -name '*.apk' -o -name '*.aab' \) | wc -l)
+          if [ "$count" -eq 0 ]; then
+            echo "::error title=Nothing to publish::Run $RUN_ID has no .apk or .aab artifact. Check the run id."
+            exit 1
+          fi
+
+      - name: Work out the release tag from the build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          # The artifact directory name carries the preset and build type.
+          dir=$(find downloaded -mindepth 1 -maxdepth 1 -type d -name 'eden-mali-*' | head -1)
+          if [ -n "$dir" ]; then
+            name=$(basename "$dir")
+          else
+            name="eden-mali-unknown"
+          fi
+          echo "TAG=apk-${name#eden-mali-}" >> "$GITHUB_ENV"
+          echo "BUILD_NAME=${name#eden-mali-}" >> "$GITHUB_ENV"
+          echo "EDEN_COMMIT=$(sed -n 's/^EDEN_COMMIT=//p' eden-source.pin)" >> "$GITHUB_ENV"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          eden_short="${EDEN_COMMIT:0:9}"
+          title="Eden Mali APK - ${BUILD_NAME}"
+
+          mkdir -p release
+          while IFS= read -r f; do
+            cp "$f" "release/eden-mali-${BUILD_NAME}-${eden_short}.${f##*.}"
+          done < <(find downloaded -type f \( -name '*.apk' -o -name '*.aab' \))
+          ls -lh release/
+
+          {
+            echo "Eden built for Arm Mali / Immortalis GPUs, targeting the Galaxy Tab S11 / S11 Ultra."
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| build | \`${BUILD_NAME}\` |"
+            echo "| Eden commit | \`${EDEN_COMMIT}\` |"
+            echo "| patches applied | $(grep -cvE '^[[:space:]]*(#|$)' patches/series) |"
+            echo "| built by run | [$RUN_ID](../../actions/runs/$RUN_ID) |"
+            echo
+            echo "Signed with Eden's checked-in debug key, so it installs alongside an"
+            echo "official Eden build instead of replacing it."
+            echo
+            case "${BUILD_NAME}" in
+              armv9*)
+                echo "**This build requires Armv9 hardware** (Galaxy Tab S11, Dimensity 9400+ and"
+                echo "similar). It will not start on older devices - build the \`optimized\` or"
+                echo "\`generic\` preset for those."
+                echo
+                ;;
+            esac
+            echo "See docs/TAB-S11-TUNING.md for recommended in-app settings and"
+            echo "docs/FINDINGS.md for what was changed and why."
+            echo
+            echo "Eden ships no Nintendo code, keys, firmware or games."
+          } > release-notes.md
+
+          pre=""
+          [ "$PRERELEASE" = "true" ] && pre="--prerelease"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "$title" --notes-file release-notes.md
+          else
+            # shellcheck disable=SC2086
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "$title" --notes-file release-notes.md \
+              --target "$GITHUB_SHA" $pre
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber release/*
+
+          url=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url)
+          {
+            echo "### APK published"
+            echo
+            echo "Release \`$TAG\`: $url"
+          } >> "$GITHUB_STEP_SUMMARY"

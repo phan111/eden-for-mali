@@ -216,18 +216,60 @@ jobs:
             echo "Eden ships no Nintendo code, keys, firmware or games."
           } > release-notes.md
 
+          # The APK is already safely uploaded as a workflow artifact by now, so a
+          # release failure must not throw away an hour-long build. The common
+          # cause is the repository capping the Actions token at read-only
+          # (Settings -> Actions -> General -> Workflow permissions), which no
+          # amount of `permissions:` in this file can override - report that
+          # clearly and let the job succeed.
+          set +e
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
-              --title "$title" --notes-file release-notes.md
+            out=$(gh release edit "$tag" --repo "$GITHUB_REPOSITORY" \
+              --title "$title" --notes-file release-notes.md 2>&1)
           else
-            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
+            out=$(gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
               --title "$title" --notes-file release-notes.md \
-              --target "$GITHUB_SHA" --prerelease
+              --target "$GITHUB_SHA" --prerelease 2>&1)
           fi
-          gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber release/*
+          rc=$?
+          if [ $rc -eq 0 ]; then
+            out=$(gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber release/* 2>&1)
+            rc=$?
+          fi
+          set -e
 
-          echo "### APK published to release \`$tag\`" >> "$GITHUB_STEP_SUMMARY"
-          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json url --jq .url >> "$GITHUB_STEP_SUMMARY"
+          if [ $rc -eq 0 ]; then
+            url=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json url --jq .url)
+            {
+              echo "### APK published"
+              echo
+              echo "Release \`$tag\`: $url"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "$out"
+          if printf '%s' "$out" | grep -q "not accessible by integration\|HTTP 403"; then
+            echo "::warning title=Release not published::The Actions token is read-only for this repository, so the APK could not be attached to a release. Enable Settings -> Actions -> General -> Workflow permissions -> 'Read and write permissions', then run the publish-release workflow to attach this build without rebuilding it."
+            {
+              echo "### APK built, but not published to a release"
+              echo
+              echo "\`gh release\` was denied with HTTP 403, which means this repository"
+              echo "caps the Actions token at read-only. The APK is still available as the"
+              echo "workflow artifact on this run."
+              echo
+              echo "To publish it:"
+              echo
+              echo "1. Settings -> Actions -> General -> Workflow permissions ->"
+              echo "   **Read and write permissions** -> Save."
+              echo "2. Run the **Publish APK to a Release** workflow with run id \`$GITHUB_RUN_ID\`."
+              echo "   That reuses this build - it does not recompile Eden."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "::error title=Release publishing failed::gh release exited $rc for an unexpected reason"
+          exit $rc
 
       - name: Upload build logs on failure
         if: failure()

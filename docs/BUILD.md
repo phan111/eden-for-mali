@@ -41,7 +41,28 @@ preset, build type and flavor. The workflow:
 
 The release is a rolling one: re-running the workflow with the same preset and
 build type replaces the assets on that tag rather than creating a new release.
-Publishing needs `contents: write`, which the workflow requests.
+
+### Releases need a writable Actions token
+
+Publishing requires `contents: write`, which the workflow requests — but a
+repository can *cap* its Actions token at read-only, and that cap wins over
+anything declared in a workflow file. When it is set, `gh release create` fails
+with `HTTP 403: Resource not accessible by integration`.
+
+Enable it once, under **Settings → Actions → General → Workflow permissions**,
+by selecting **Read and write permissions**.
+
+The build step never fails because of this: the APK is uploaded as a workflow
+artifact before the release is attempted, and if publishing is denied the job
+warns, writes instructions into the run summary, and still succeeds.
+
+### Publishing a build you already have
+
+`publish-release.yml` attaches an APK from an earlier build run to a release
+**without recompiling Eden**. Actions → *Publish APK to a Release* → *Run
+workflow*, and give it the run id of the build (it is in that run's URL). Use
+this after enabling the token permission, instead of spending another hour on a
+rebuild.
 
 Expect a cold build to take a long time; `ccache` is cached between runs, so
 re-runs on the same pin are much faster.

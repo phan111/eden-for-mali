@@ -46,6 +46,13 @@ the matching release and also uploaded as a workflow artifact. The APK is signed
 with Eden's checked-in debug key, so it installs alongside an official Eden
 build rather than replacing it.
 
+Attaching to a release needs the repository's Actions token to be writable
+(**Settings → Actions → General → Workflow permissions → Read and write
+permissions**). Without it the build still succeeds and the APK is still
+downloadable from the run's artifacts — see [`docs/BUILD.md`](docs/BUILD.md).
+The *Publish APK to a Release* workflow can then attach an already-finished
+build without rebuilding it.
+
 **Locally.**
 
 ```sh

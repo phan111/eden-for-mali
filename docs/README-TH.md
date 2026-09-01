@@ -54,6 +54,16 @@ Qualcomm โดยเฉพาะ (ส่วนที่ใช้ compute shader
 [`apk-armv9-x925-Release`](../../releases/tag/apk-armv9-x925-Release)
 ไฟล์ใน release ดาวน์โหลดตรงได้และไม่หมดอายุ (ต่างจาก artifact ที่หมดอายุ)
 
+> **ต้องเปิดสิทธิ์ก่อนหนึ่งครั้ง** — repo นี้จำกัด Actions token ไว้เป็น read-only
+> ทำให้ CI สร้าง release ไม่ได้ (ได้ `HTTP 403`) และการประกาศ `contents: write`
+> ในไฟล์ workflow ก็ทับค่านี้ไม่ได้ ให้ไปที่
+> **Settings → Actions → General → Workflow permissions** เลือก
+> **Read and write permissions** แล้ว Save
+>
+> ระหว่างที่ยังไม่เปิด build ยังสำเร็จปกติและดาวน์โหลด APK ได้จาก artifact ของ run
+> และเมื่อเปิดแล้วให้รัน workflow *Publish APK to a Release* พร้อมใส่ run id
+> ของ build เดิม เพื่อแปะไฟล์ที่ build ไว้แล้วขึ้น release **โดยไม่ต้อง compile ใหม่**
+
 **อยาก build ใหม่** — ไปที่แท็บ Actions → *Build Eden APK (Mali / Galaxy Tab S11)*
 → *Run workflow* เลือก preset กับ build type แล้วรอ ไฟล์จะไปทั้งใน release
 และ artifact
