@@ -69,10 +69,17 @@ the Arm driver correctly, so the log identifies the shader that hangs. Enable
 `gpu_log_level` plus `gpu_log_driver_debug` under Advanced Graphics.
 
 > Whether this stall is specific to the `armv9-x925` build or is how Eden
-> behaves on this Mali driver generally is **not yet established**. The control
-> is a `custom`-preset build — identical source and patches, no `-march`/`-mtune`
-> flags, which is exactly what upstream Eden ships. Compare the same scene on
-> both before blaming either.
+> behaves on this Mali driver generally is **not yet established**.
+>
+> The control build now exists: release tag **`apk-custom-Release`**. It is the
+> identical source and patch series with no `-march`/`-mtune` flags — exactly
+> what upstream Eden ships. Verified as a true Armv8 baseline: its
+> `libyuzu-android.so` contains no RCPC (`ldapr`) instructions and effectively no
+> SVE, against 124 `ldapr`, 1895 `ptrue` and 2150 `addvl` in the `armv9-x925`
+> binary.
+>
+> Run the same scene on both, with identical settings, and compare how long
+> `Building 1 Shader(s)` lasts.
 
 ## Not GPU settings, but they matter
 
