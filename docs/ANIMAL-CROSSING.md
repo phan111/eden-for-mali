@@ -46,6 +46,86 @@ a moment later and the frame rate never drops to zero.
 That single default explains the capture exactly: 30 fps → 21.2 → 6.2 → 0.0,
 pinned at zero on one shader for 25+ seconds.
 
+## Measured with async shaders on: it works, but one shader still blocks
+
+A second capture on the Tab S11 with **Asynchronous Shaders enabled** settles what
+that setting does and does not fix. Reading the on-screen counter:
+
+| counter | reading |
+| --- | --- |
+| `FPS: 25.6 \| Building 74 Shader(s)` | full speed while 74 compile |
+| `FPS: 23.7 → 28.1 → 30.0 \| Building 109 Shader(s)` | recovers to 30 with 109 in flight |
+| `FPS: 29.9 \| Building 110 Shader(s)` | 110 compiling, still 30 fps |
+| `FPS: 30.0 \| Building 7 Shader(s)` | fine |
+| `FPS: 16.9 → 1.9 → 0.0 \| Building 1 Shader(s)` | **one** shader, pinned at zero |
+
+So asynchronous shaders is doing exactly its job: Eden compiles **110 shaders
+concurrently while holding the game's full 30 fps**. The residual freeze is not
+async failing — it is a single shader taking a code path that ignores the setting.
+
+### Two paths bypass asynchronous shaders
+
+**1. Compute pipelines are never asynchronous.**
+`PipelineCache::CurrentComputePipeline()` (`vk_pipeline_cache.cpp:569-588`) has no
+async handling whatsoever — no `use_asynchronous_shaders` check, no skip:
+
+```cpp
+    const auto [pair, is_new]{compute_cache.try_emplace(key)};
+    auto& pipeline{pair->second};
+    if (!is_new) {
+        return pipeline.get();
+    }
+    pipeline = CreateComputePipeline(key, shader);   // builds, then returns
+    return pipeline.get();
+```
+
+Compare the graphics path, which routes through `BuiltPipeline()` and can return
+`nullptr` to skip a draw. A compute dispatch cannot be skipped that way — its
+results feed later draws, so dropping it would corrupt the frame rather than
+delay it. That is presumably why it is synchronous, and it means **every compute
+shader blocks, on every driver, regardless of the async setting**.
+
+Nor is compute disabled on Mali. `Device::CheckBrokenCompute()`
+(`vulkan_device.h:1062-1076`) returns true only for Intel proprietary Windows
+drivers between 0.405.0 and 0.405.286; `enable_compute_pipelines` exists purely
+for that case, and its own tooltip says "Compute pipelines are always enabled on
+all other drivers."
+
+**2. Small graphics draws are built synchronously even in async mode.**
+In `BuiltPipeline()`:
+
+```cpp
+    // If games are using a small index count, we can assume these are full screen quads.
+    if (draw_state.index_buffer.count <= 6 || draw_state.vertex_buffer.count <= 6) {
+        return pipeline;    // unbuilt: the draw waits
+    }
+```
+
+Either path produces exactly the observed signature: everything else streams in
+asynchronously at full speed while one shader holds the frame at zero.
+
+### What to do about it
+
+**Wait it out, once.** It is a single shader, and
+`use_vulkan_driver_pipeline_cache` is on by default, so once it finishes it is
+stored and that scene never stalls again. Both captures were force-closed after
+18-25 seconds; it may simply need longer. Give it several minutes before
+concluding it is hung.
+
+This is now safe to do: before patch `0003`, force-closing mid-build could leave
+a truncated pipeline cache that bricked the title on the next launch. With the
+atomic write in place, interrupting a build costs nothing but the build.
+
+Raising `pipeline_worker_count` does **not** help this particular stall — extra
+worker threads add parallelism across many shaders, and this is one shader on one
+thread. Raise it anyway for the 74-110 shader bursts above; just do not expect it
+to shorten the single-shader freeze.
+
+If it genuinely never completes, that is a driver-level hang in
+`vkCreateComputePipelines` (or the recompiler), and identifying the shader needs a
+GPU log — `gpu_log_level` plus `gpu_log_driver_debug`, which patch `0002` makes
+label the Arm driver correctly.
+
 ## The settings that actually matter here
 
 ### 1. Asynchronous shaders → ON
