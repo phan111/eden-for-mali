@@ -1,0 +1,197 @@
+From eac47f24f518e3a444512ed719831bb397f287d6 Mon Sep 17 00:00:00 2001
+From: eden-for-mali <chatpimookt@gmail.com>
+Date: Wed, 2 Sep 2026 13:28:59 +0000
+Subject: [PATCH 3/3] [vulkan] write the driver pipeline cache atomically and
+ reject truncated ones
+
+SerializeVulkanPipelineCache opened the destination directly, which truncates a
+working cache as soon as the stream is opened, and wrote the header before the
+payload. Losing the process in between - a crash, or the user force-stopping the
+app while a slow shader build has the emulator unresponsive - therefore left a
+file whose magic number and version still validated but whose payload was short.
+
+LoadVulkanPipelineCache checked only the magic number and version, then derived
+the payload length from the file size, so it could not tell a truncated cache
+from a complete one and handed the partial blob to vkCreatePipelineCache. On the
+Arm proprietary driver that reproduces as a permanent black screen on the next
+launch: the title never renders again until the cache is deleted by hand.
+
+Serialize through a sibling .tmp and rename it into place, so the destination is
+either the previous cache or a fully written new one. Record the payload length
+in the header and refuse to load a file whose payload does not match it, which
+also catches a cache truncated by anything else. CACHE_VERSION goes to 19, both
+for the header change and so caches already truncated on disk are discarded
+rather than retried.
+
+The serialize path no longer deletes the destination when writing fails; only
+the temporary file is removed, leaving the last good cache intact.
+---
+ .../renderer_vulkan/vk_pipeline_cache.cpp     | 105 +++++++++++++-----
+ 1 file changed, 79 insertions(+), 26 deletions(-)
+
+diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+index 6e6120d..54bbc27 100644
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -6,10 +6,12 @@
+ 
+ #include <algorithm>
+ #include <cstddef>
++#include <filesystem>
+ #include <fstream>
+ #include <iostream>
+ #include <memory>
+ #include <span>
++#include <system_error>
+ #include <thread>
+ #include <vector>
+ #include <bit>
+@@ -62,7 +64,10 @@ using VideoCommon::FileEnvironment;
+ using VideoCommon::GenericEnvironment;
+ using VideoCommon::GraphicsEnvironment;
+ 
+-constexpr u32 CACHE_VERSION = 18;
++// Bumped to 19: the Vulkan driver pipeline cache header gained a payload length
++// field, and bumping this also discards caches written by the previous version,
++// which could be silently truncated (see SerializeVulkanPipelineCache).
++constexpr u32 CACHE_VERSION = 19;
+ constexpr std::array<char, 8> VULKAN_CACHE_MAGIC_NUMBER{'y', 'u', 'z', 'u', 'v', 'k', 'c', 'h'};
+ 
+ template <typename Container>
+@@ -983,16 +988,21 @@ std::unique_ptr<ComputePipeline> PipelineCache::CreateComputePipeline(
+ 
+ void PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& filename,
+                                                  const vk::PipelineCache& pipeline_cache,
+-                                                 u32 cache_version) try {
+-    std::ofstream file(filename, std::ios::binary);
+-    file.exceptions(std::ifstream::failbit);
+-    if (!file.is_open()) {
+-        LOG_ERROR(Common_Filesystem, "Failed to open Vulkan driver pipeline cache file {}",
+-                  Common::FS::PathToUTF8String(filename));
+-        return;
+-    }
+-    file.write(VULKAN_CACHE_MAGIC_NUMBER.data(), VULKAN_CACHE_MAGIC_NUMBER.size())
+-        .write(reinterpret_cast<const char*>(&cache_version), sizeof(cache_version));
++                                                 u32 cache_version) {
++    // Serialize through a temporary file and rename it into place.
++    //
++    // Writing to the destination directly truncates a working cache the moment
++    // the stream is opened, and the header is written before the payload. Losing
++    // the process in between - a crash, or the user force-stopping the app while
++    // a slow shader build has the emulator unresponsive - therefore leaves a file
++    // whose magic number and version still validate but whose payload is short.
++    // Nothing on the load path can distinguish that from a complete cache, so the
++    // partial blob is handed to the driver on the next launch.
++    //
++    // A rename is atomic on every platform we target, so the destination is either
++    // the previous cache or a fully written new one, never a mixture.
++    std::filesystem::path temp_filename{filename};
++    temp_filename += ".tmp";
+ 
+     size_t cache_size = 0;
+     std::vector<char> cache_data;
+@@ -1001,17 +1011,41 @@ void PipelineCache::SerializeVulkanPipelineCache(const std::filesystem::path& fi
+         cache_data.resize(cache_size);
+         pipeline_cache.Read(&cache_size, cache_data.data());
+     }
+-    file.write(cache_data.data(), cache_size);
+ 
+-    LOG_INFO(Render_Vulkan, "Vulkan driver pipelines cached at: {}",
+-             Common::FS::PathToUTF8String(filename));
++    try {
++        std::ofstream file(temp_filename, std::ios::binary | std::ios::trunc);
++        if (!file.is_open()) {
++            LOG_ERROR(Common_Filesystem, "Failed to open Vulkan driver pipeline cache file {}",
++                      Common::FS::PathToUTF8String(temp_filename));
++            return;
++        }
++        file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
++
++        const u64 payload_size = static_cast<u64>(cache_size);
++        file.write(VULKAN_CACHE_MAGIC_NUMBER.data(), VULKAN_CACHE_MAGIC_NUMBER.size())
++            .write(reinterpret_cast<const char*>(&cache_version), sizeof(cache_version))
++            .write(reinterpret_cast<const char*>(&payload_size), sizeof(payload_size));
++        file.write(cache_data.data(), static_cast<std::streamsize>(cache_size));
++        file.flush();
++        file.close();
++    } catch (const std::ios_base::failure& e) {
++        LOG_ERROR(Common_Filesystem, "{}", e.what());
++        Common::FS::RemoveFile(temp_filename);
++        return;
++    }
+ 
+-} catch (const std::ios_base::failure& e) {
+-    LOG_ERROR(Common_Filesystem, "{}", e.what());
+-    if (!Common::FS::RemoveFile(filename)) {
+-        LOG_ERROR(Common_Filesystem, "Failed to delete Vulkan driver pipeline cache file {}",
+-                  Common::FS::PathToUTF8String(filename));
++    std::error_code ec;
++    std::filesystem::rename(temp_filename, filename, ec);
++    if (ec) {
++        LOG_ERROR(Common_Filesystem,
++                  "Failed to move Vulkan driver pipeline cache into place at \"{}\": {}",
++                  Common::FS::PathToUTF8String(filename), ec.message());
++        Common::FS::RemoveFile(temp_filename);
++        return;
+     }
++
++    LOG_INFO(Render_Vulkan, "Vulkan driver pipelines cached at: {}",
++             Common::FS::PathToUTF8String(filename));
+ }
+ 
+ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::path& filename,
+@@ -1036,17 +1070,37 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
+ 
+         std::array<char, 8> magic_number;
+         u32 cache_version;
++        u64 payload_size;
+         file.read(magic_number.data(), magic_number.size())
+-            .read(reinterpret_cast<char*>(&cache_version), sizeof(cache_version));
+-        if (magic_number != VULKAN_CACHE_MAGIC_NUMBER || cache_version != expected_cache_version) {
++            .read(reinterpret_cast<char*>(&cache_version), sizeof(cache_version))
++            .read(reinterpret_cast<char*>(&payload_size), sizeof(payload_size));
++
++        static constexpr size_t header_size =
++            magic_number.size() + sizeof(cache_version) + sizeof(payload_size);
++        const bool bad_magic = magic_number != VULKAN_CACHE_MAGIC_NUMBER;
++        const bool bad_version = cache_version != expected_cache_version;
++        // A short payload means the previous run was killed while serializing.
++        // Handing that to the driver risks a hang or crash on startup, so treat
++        // it exactly like a corrupt file and start over.
++        const bool truncated =
++            !bad_magic && !bad_version &&
++            static_cast<u64>(static_cast<size_t>(end) - header_size) != payload_size;
++
++        if (bad_magic || bad_version || truncated) {
+             file.close();
+             if (Common::FS::RemoveFile(filename)) {
+-                if (magic_number != VULKAN_CACHE_MAGIC_NUMBER) {
++                if (bad_magic) {
+                     LOG_ERROR(Common_Filesystem, "Invalid Vulkan driver pipeline cache file");
+                 }
+-                if (cache_version != expected_cache_version) {
++                if (bad_version) {
+                     LOG_INFO(Common_Filesystem, "Deleting old Vulkan driver pipeline cache");
+                 }
++                if (truncated) {
++                    LOG_ERROR(Common_Filesystem,
++                              "Truncated Vulkan driver pipeline cache ({} bytes on disk, {} "
++                              "expected), discarding it",
++                              static_cast<size_t>(end) - header_size, payload_size);
++                }
+             } else {
+                 LOG_ERROR(Common_Filesystem,
+                           "Invalid Vulkan pipeline cache file and failed to delete it in \"{}\"",
+@@ -1055,10 +1109,9 @@ vk::PipelineCache PipelineCache::LoadVulkanPipelineCache(const std::filesystem::
+             return create_pipeline_cache(0, nullptr);
+         }
+ 
+-        static constexpr size_t header_size = magic_number.size() + sizeof(cache_version);
+-        const size_t cache_size = static_cast<size_t>(end) - header_size;
++        const size_t cache_size = static_cast<size_t>(payload_size);
+         std::vector<char> cache_data(cache_size);
+-        file.read(cache_data.data(), cache_size);
++        file.read(cache_data.data(), static_cast<std::streamsize>(cache_size));
+ 
+         LOG_INFO(Render_Vulkan,
+                  "Loaded Vulkan driver pipeline cache: ", Common::FS::PathToUTF8String(filename));

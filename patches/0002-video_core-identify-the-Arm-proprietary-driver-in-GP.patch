@@ -1,7 +1,7 @@
 From a898447d6edfce99d5cc85bff305fcef1869a42f Mon Sep 17 00:00:00 2001
 From: eden-for-mali <chatpimookt@gmail.com>
 Date: Tue, 1 Sep 2026 13:10:57 +0000
-Subject: [PATCH 2/2] [video_core] identify the Arm proprietary driver in GPU
+Subject: [PATCH 2/3] [video_core] identify the Arm proprietary driver in GPU
  logging
 
 GPU logging could label Turnip and the Qualcomm proprietary driver but fell
