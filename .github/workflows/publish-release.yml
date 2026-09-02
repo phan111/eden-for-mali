@@ -78,9 +78,14 @@ jobs:
           eden_short="${EDEN_COMMIT:0:9}"
           title="Eden Mali APK - ${BUILD_NAME}"
 
+          # Match build-apk.yml: the name carries both Eden's commit and the commit
+          # of the patch series, so two builds of the same Eden revision with
+          # different patches cannot collide on one filename.
+          repo_short="${GITHUB_SHA:0:7}"
           mkdir -p release
           while IFS= read -r f; do
-            cp "$f" "release/eden-mali-${BUILD_NAME}-${eden_short}.${f##*.}"
+            cp "$f" \
+              "release/eden-mali-${BUILD_NAME}-eden${eden_short}-r${repo_short}.${f##*.}"
           done < <(find downloaded -type f \( -name '*.apk' -o -name '*.aab' \))
           ls -lh release/
 

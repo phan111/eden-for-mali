@@ -180,11 +180,16 @@ jobs:
           title="Eden Mali APK - ${PRESET} (${BUILD_TYPE})"
 
           # Name the assets after what they actually are, not "app-mainline-release".
+          # The name carries this repository's commit as well as Eden's: two builds
+          # of the same Eden revision with a different patch series would otherwise
+          # land on an identical filename, which is a good way to test the wrong APK.
+          repo_short="${GITHUB_SHA:0:7}"
           mkdir -p release
           for f in eden-src/artifacts/*.apk eden-src/artifacts/*.aab; do
             [ -e "$f" ] || continue
             base="$(basename "$f")"
-            cp "$f" "release/eden-mali-${PRESET}-${BUILD_TYPE}-${eden_short}.${base##*.}"
+            cp "$f" \
+              "release/eden-mali-${PRESET}-${BUILD_TYPE}-eden${eden_short}-r${repo_short}.${base##*.}"
           done
           ls -lh release/
 
@@ -239,6 +244,17 @@ jobs:
           set -e
 
           if [ $rc -eq 0 ]; then
+            # Prune assets from previous builds; the tag is a rolling release and
+            # two differently-named APKs sitting on it is worse than none.
+            keep=$(cd release && ls | tr '\n' '|' | sed 's/|$//')
+            gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq '.assets[].name' | while read -r asset; do
+                [ -n "$asset" ] || continue
+                if ! printf '%s' "$asset" | grep -qE "^(${keep})$"; then
+                  echo "removing stale asset $asset"
+                  gh release delete-asset "$tag" "$asset" --repo "$GITHUB_REPOSITORY" --yes || true
+                fi
+              done
             url=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json url --jq .url)
             {
               echo "### APK published"
