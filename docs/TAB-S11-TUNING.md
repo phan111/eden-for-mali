@@ -52,6 +52,10 @@ the `armv9-x925` build showed this:
 A **single** shader took over 25 seconds and blocked the render thread the whole
 time. The emulator had not crashed; it was waiting.
 
+**Turn Asynchronous shaders on**, and raise **pipeline worker count** — its
+Android default is 2 while this SoC supports 7 compile threads. Both are worked
+through against the source in [`ANIMAL-CROSSING.md`](ANIMAL-CROSSING.md).
+
 **Turn Asynchronous shaders on.** With it off, pipeline creation happens on the
 thread that presents frames, so one slow compile stops everything. With it on,
 the frame keeps advancing and the shader is dropped in when it is ready.

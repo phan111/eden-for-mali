@@ -31,7 +31,9 @@ for why the list is short.
 > on pre-Armv9 devices. Build the `optimized` or `generic` preset for those.
 
 The bulk of the practical gain on a Tab S11 comes from **settings**, not from
-patching Eden — see [`docs/TAB-S11-TUNING.md`](docs/TAB-S11-TUNING.md).
+patching Eden — see [`docs/TAB-S11-TUNING.md`](docs/TAB-S11-TUNING.md), and
+[`docs/ANIMAL-CROSSING.md`](docs/ANIMAL-CROSSING.md) for a per-title study of
+Animal Crossing: New Horizons.
 
 ## Getting an APK
 
