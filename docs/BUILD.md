@@ -88,6 +88,29 @@ EDEN_REMOTE=upstream ./scripts/prepare-source.sh
 Both remotes carry the same commit; the mirror exists because
 `git.eden-emu.dev` is not reachable from every network.
 
+## Telling two builds apart on the device
+
+Every preset builds the same `applicationId` (`dev.eden.eden_emulator`) with the
+same app name, so installing one replaces the other and nothing in the launcher
+distinguishes them. To make an A/B interpretable, CI stamps each build with its
+preset.
+
+It does that through a mechanism Eden already has: `GIT-TAG` and `GIT-RELEASE`
+files in the source root, read by `externals/cmake-modules/GetSCMRev.cmake`, with
+`CMakeModules/GenerateSCMRev.cmake` then using `GIT_TAG` verbatim as
+`BUILD_VERSION`. No patch is involved.
+
+The stamp is `<preset><-hyphens-removed>-r<repo commit>`, e.g.
+`armv9x925-re6adf29`. It shows up in three places:
+
+- the **in-game overlay**, which renders the segment before the first hyphen as
+  the build id — so it reads `armv9x925` or `custom` next to the FPS counter, and
+  a screen recording identifies the build with no extra effort;
+- **Settings → Apps → Eden**, as the app version;
+- the **release asset filename**, which also carries the commit.
+
+Hyphens are stripped from the preset because the overlay splits on the first one.
+
 ## Signing
 
 With no `ANDROID_KEYSTORE_B64` set, Eden's build signs with the debug keystore
