@@ -122,6 +122,28 @@ jobs:
       - name: Clone Eden and apply the Mali patch series
         run: ./scripts/prepare-source.sh "${GITHUB_WORKSPACE}/eden-src"
 
+      # Make a build say which preset it is, on the device itself. Eden reads
+      # GIT-TAG and GIT-RELEASE from the source root
+      # (externals/cmake-modules/GetSCMRev.cmake), and GenerateSCMRev.cmake then
+      # uses GIT_TAG verbatim as BUILD_VERSION when GIT_RELEASE is defined. The
+      # Android overlay displays the segment before the first hyphen as the build
+      # id, so the preset lands there and a screen recording of the running game
+      # identifies the APK. Hyphens are stripped from the preset for that reason.
+      #
+      # Both presets otherwise build the same applicationId, install over each
+      # other and look identical, which makes an A/B impossible to interpret.
+      - name: Stamp the build with its preset
+        working-directory: eden-src
+        run: |
+          set -eux
+          preset_tag="${PRESET//-/}"
+          stamp="${preset_tag}-r${GITHUB_SHA:0:7}"
+          printf '%s' "$stamp" > GIT-TAG
+          printf '%s' "${GITHUB_SHA:0:7}" > GIT-RELEASE
+          # Also becomes the Android versionName, visible in Settings -> Apps.
+          echo "GIT_TAG_NAME=${stamp}" >> "$GITHUB_ENV"
+          echo "on-device build id will be: ${preset_tag}  (full: ${stamp})"
+
       - name: Give Gradle more metaspace
         working-directory: eden-src
         run: |
