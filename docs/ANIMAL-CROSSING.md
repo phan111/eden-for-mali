@@ -104,6 +104,46 @@ In `BuiltPipeline()`:
 Either path produces exactly the observed signature: everything else streams in
 asynchronously at full speed while one shader holds the frame at zero.
 
+### The A/B result: the build preset is not the cause
+
+Both presets were run on the Tab S11 against the same scene, with the build now
+identifying itself in the overlay (see [`BUILD.md`](BUILD.md)).
+
+**`armv9x925 | SM-X730 | Mali-G925-Immortalis MC12 | MT6991 | 19.0.1`**
+
+| elapsed | counter |
+| --- | --- |
+| 0-6 s | `FPS: 30.0` |
+| 7 s | `FPS: 29.3 \| Building 1 Shader(s)` |
+| 8 s onwards | `FPS: 0.0 \| Building 1 Shader(s)` |
+
+**`custom | SM-X730 | Mali-G925-Immortalis MC12 | MT6991 | 19.0.1`**
+
+| elapsed | counter |
+| --- | --- |
+| 0-5 s | `FPS: 24.9 → 30.0 \| Building 63 → 98 → 99 Shader(s)` |
+| 6-15 s | `FPS: 29.9-30.0 \| Building 13, then 7 Shader(s)` |
+| 16-22 s | `FPS: 29.9-30.5`, nothing building |
+| 23 s | `FPS: 21.8 \| Building 1 Shader(s)` |
+| 24 s onwards | `FPS: 0.0 \| Building 1 Shader(s)` |
+
+Both runs ended frozen on the **same line of Timmy's dialogue** at the Nook Inc.
+counter — "Welcome…to the check-in counter for your Deserted Island Geta" — at
+`FPS: 0.0 | Building 1 Shader(s)`.
+
+`custom` is upstream Eden's own compiler configuration: no `-march`, no `-mtune`,
+identical source and patch series otherwise. Its binary was checked to be a
+genuine Armv8 baseline (zero `ldapr`, effectively no SVE, against 124 `ldapr`,
+1895 `ptrue` and 2150 `addvl` in the `armv9-x925` binary).
+
+**So `-march=armv9-a` does not cause the freeze.** It reproduces identically on
+stock compiler settings, which points at where the source already said it would:
+a shader on a path that never goes asynchronous. The `armv9-x925` preset is
+cleared to keep.
+
+The `custom` run also shows the async path working well before the stall — 99
+shaders in flight at a full 30 fps.
+
 ### What to do about it
 
 **Wait it out, once.** It is a single shader, and
@@ -203,9 +243,8 @@ is tuned for it automatically — every recommendation above has to be set by ha
 
 ## Still unverified
 
-- Whether the 25-second compile is normal for this shader on Arm driver 19.0.1,
-  or is specific to the `armv9-x925` build. The `custom`-preset control build
-  settles that; until it is compared, neither is ruled out.
+- ~~Whether the stall is specific to the `armv9-x925` build.~~ **Settled — it is
+  not.** See "The A/B result" below.
 - Whether raising `pipeline_worker_count` measurably shortens the stall on this
   device. It follows from the code, but it has not been measured here.
 - Reported elsewhere, not verified in this repository: ACNH is rated playable

@@ -93,11 +93,21 @@ older toolchain degrades to generic tuning instead of failing to configure.
 
 ## Not measured
 
-Nothing in this repository has been benchmarked on a physical Galaxy Tab S11 —
-there is no such device in the build environment, and no Android device of any
-kind. The patches are conservative by design for exactly that reason: patch 0001
-changes only compiler flags, and patch 0002 changes only log output plus a
-comment. Neither alters renderer behaviour.
+No *performance* numbers here were produced in the build environment — it has no
+Android device of any kind. What has since been measured, on a physical Galaxy
+Tab S11 (`SM-X730`, Mali-G925-Immortalis MC12, `MT6991`, Arm driver 19.0.1), is
+behavioural rather than numerical:
 
-Treat the settings guide as a starting point to measure from, not as a set of
-proven numbers.
+- Asynchronous shaders works: 110 shaders compiled concurrently while the game
+  held its full 30 fps.
+- A single shader still freezes the emulator at 0 fps, on a path that ignores the
+  async setting.
+- **The build preset is not responsible for that freeze.** `armv9-x925` and
+  `custom` (upstream Eden's own flags) both stopped on the same line of dialogue
+  in the same scene.
+
+Details and the counter readings are in
+[`ANIMAL-CROSSING.md`](ANIMAL-CROSSING.md).
+
+There are still no frame-rate comparisons between the presets. Treat the settings
+guide as a starting point to measure from, not as a set of proven numbers.

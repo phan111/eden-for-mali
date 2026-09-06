@@ -68,18 +68,14 @@ If the stall persists with async shaders on, capture a GPU log — Eden now labe
 the Arm driver correctly, so the log identifies the shader that hangs. Enable
 `gpu_log_level` plus `gpu_log_driver_debug` under Advanced Graphics.
 
-> Whether this stall is specific to the `armv9-x925` build or is how Eden
-> behaves on this Mali driver generally is **not yet established**.
+> **Resolved: the build preset is not the cause.** Both presets were run on the
+> Tab S11 against the same scene. `armv9-x925` and `custom` — the latter being
+> upstream Eden's own compiler settings, with no `-march`/`-mtune` — froze at
+> `FPS: 0.0 | Building 1 Shader(s)` on the *same* line of dialogue at the Nook
+> Inc. counter. See [`ANIMAL-CROSSING.md`](ANIMAL-CROSSING.md) for the readings.
 >
-> The control build now exists: release tag **`apk-custom-Release`**. It is the
-> identical source and patch series with no `-march`/`-mtune` flags — exactly
-> what upstream Eden ships. Verified as a true Armv8 baseline: its
-> `libyuzu-android.so` contains no RCPC (`ldapr`) instructions and effectively no
-> SVE, against 124 `ldapr`, 1895 `ptrue` and 2150 `addvl` in the `armv9-x925`
-> binary.
->
-> Run the same scene on both, with identical settings, and compare how long
-> `Building 1 Shader(s)` lasts.
+> The stall is Eden-on-Mali behaviour, not something this repository's build
+> flags introduce.
 
 ## Not GPU settings, but they matter
 
