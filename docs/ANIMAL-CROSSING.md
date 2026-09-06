@@ -161,10 +161,35 @@ worker threads add parallelism across many shaders, and this is one shader on on
 thread. Raise it anyway for the 74-110 shader bursts above; just do not expect it
 to shorten the single-shader freeze.
 
-If it genuinely never completes, that is a driver-level hang in
-`vkCreateComputePipelines` (or the recompiler), and identifying the shader needs a
-GPU log — `gpu_log_level` plus `gpu_log_driver_debug`, which patch `0002` makes
-label the Arm driver correctly.
+### Capturing the shader that stalls
+
+If it genuinely never completes, the next step is to name the shader. That does
+**not** need the GPU logging settings — Eden already logs every pipeline it starts
+building, at the default log level:
+
+```cpp
+// CreateComputePipeline and CreateGraphicsPipeline, vk_pipeline_cache.cpp
+LOG_INFO(Render_Vulkan, "{:#016x}", hash);
+```
+
+The default `log_filter` is `*:Info` (`settings.h:913`), so those lines are already
+being written. The **last** `Render_Vulkan` hash in the log before the freeze is
+the shader that hung.
+
+One catch, and it matters: `log_flush_line` defaults to **false**
+(`settings.h:914`), which means the log is written in 4 KB buffers
+(`common/logging.cpp:277-279`). Force-close during a stall and the last lines —
+exactly the ones wanted — may never reach disk.
+
+So: turn **flush log lines on first**, then reproduce, then collect
+
+```
+/storage/emulated/0/Android/data/dev.eden.eden_emulator/files/log/eden_log.txt
+```
+
+The GPU logging settings (`gpu_log_level`, `gpu_log_driver_debug`) add driver and
+extension detail on top, and patch `0002` makes them label the Arm driver
+correctly — useful, but the plain log is enough to identify the shader.
 
 ## The settings that actually matter here
 
