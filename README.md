@@ -37,10 +37,25 @@ Animal Crossing: New Horizons.
 
 ## Getting an APK
 
-**From the repository's Releases.** Every successful build publishes the APK to
-a release tagged `apk-<preset>-<build-type>` — for the Tab S11 target that is
-[`apk-armv9-x925-Release`](../../releases/tag/apk-armv9-x925-Release). Release
-assets are a direct download and do not expire, unlike workflow artifacts.
+**Permanent download link.** Every build publishes to a release tagged
+`apk-<preset>-<build-type>`, and each release carries an asset under a fixed
+`-latest` name that always resolves to the newest build:
+
+| preset | always-current APK |
+| --- | --- |
+| `armv9-x925` (Tab S11) | [`eden-mali-armv9-x925-latest.apk`](../../releases/download/apk-armv9-x925-Release/eden-mali-armv9-x925-latest.apk) |
+| `custom` (upstream flags) | [`eden-mali-custom-latest.apk`](../../releases/download/apk-custom-Release/eden-mali-custom-latest.apk) |
+
+Those URLs never change. Alongside them each release also keeps the build under a
+versioned name carrying the Eden and patch-series commits, for when you need to
+know exactly which build you have. Release assets do not expire, unlike workflow
+artifacts.
+
+**Kept up to date automatically.** `update-eden.yml` runs weekly: it looks for a
+newer Eden revision, applies the patch series to it, and only if every patch
+still applies does it move the pin and start builds. If a patch stops applying it
+leaves the pin alone and reports which one — a stale APK beats one built from a
+silently dropped patch.
 
 **Building a fresh one.** Actions → *Build Eden APK (Mali / Galaxy Tab S11)* →
 *Run workflow*. Pick a preset and build type; the APK and AAB are attached to

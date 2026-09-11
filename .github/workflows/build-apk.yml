@@ -205,13 +205,17 @@ jobs:
           # The name carries this repository's commit as well as Eden's: two builds
           # of the same Eden revision with a different patch series would otherwise
           # land on an identical filename, which is a good way to test the wrong APK.
+          # Each build also ships under a fixed "-latest" name, so there is a
+          # permanent download URL that always resolves to the newest build of
+          # this preset. Without it every rebuild changes the link.
           repo_short="${GITHUB_SHA:0:7}"
           mkdir -p release
           for f in eden-src/artifacts/*.apk eden-src/artifacts/*.aab; do
             [ -e "$f" ] || continue
-            base="$(basename "$f")"
+            ext="${f##*.}"
             cp "$f" \
-              "release/eden-mali-${PRESET}-${BUILD_TYPE}-eden${eden_short}-r${repo_short}.${base##*.}"
+              "release/eden-mali-${PRESET}-${BUILD_TYPE}-eden${eden_short}-r${repo_short}.${ext}"
+            cp "$f" "release/eden-mali-${PRESET}-latest.${ext}"
           done
           ls -lh release/
 
@@ -226,6 +230,9 @@ jobs:
             echo "| Eden commit | \`${eden_commit}\` |"
             echo "| patches applied | $(grep -cvE '^[[:space:]]*(#|$)' patches/series) |"
             echo "| built | $(date -u '+%Y-%m-%d %H:%M') UTC |"
+            echo
+            echo "Permanent link, always the newest build of this preset:"
+            echo "\`eden-mali-${PRESET}-latest.apk\` below."
             echo
             echo "Signed with Eden's checked-in debug key, so it installs alongside an"
             echo "official Eden build instead of replacing it."

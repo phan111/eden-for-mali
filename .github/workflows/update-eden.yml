@@ -1,0 +1,170 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Keep the published APK current with upstream Eden.
+#
+# Weekly: look for a newer Eden revision, test the patch series against it, and
+# only if every patch still applies, move the pin and kick off a build. When a
+# patch no longer applies the pin is left alone and the run says which one broke,
+# because a silently skipped patch is worse than a stale APK.
+name: Update Eden revision
+
+on:
+  schedule:
+    # Mondays 03:00 UTC. Eden moves most days; weekly keeps the APK fresh without
+    # spending an hour of runner time on every upstream commit.
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Eden ref to move to (default: the mirror's master tip)"
+        type: string
+        default: ""
+      dry_run:
+        description: "Test the patches but do not move the pin"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: update-eden
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Work out the current and candidate Eden revisions
+        id: revs
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source eden-source.pin
+
+          current="${EDEN_COMMIT}"
+          if [ -n "${{ inputs.target }}" ]; then
+            candidate=$(git ls-remote "${EDEN_MIRROR_URL}" "${{ inputs.target }}" | cut -f1)
+            [ -n "$candidate" ] || candidate="${{ inputs.target }}"
+          else
+            candidate=$(git ls-remote "${EDEN_MIRROR_URL}" "refs/heads/${EDEN_BRANCH}" | cut -f1)
+          fi
+
+          if [ -z "$candidate" ]; then
+            echo "::error title=Could not resolve Eden revision::git ls-remote returned nothing for ${EDEN_MIRROR_URL}"
+            exit 1
+          fi
+
+          echo "current=$current"   >> "$GITHUB_OUTPUT"
+          echo "candidate=$candidate" >> "$GITHUB_OUTPUT"
+          echo "mirror=${EDEN_MIRROR_URL}" >> "$GITHUB_OUTPUT"
+
+          if [ "$current" = "$candidate" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already on the newest Eden revision ($current)."
+            echo "Already on the newest Eden revision \`$current\`." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "current   $current"
+            echo "candidate $candidate"
+          fi
+
+      - name: Test the patch series against the candidate
+        id: test
+        if: steps.revs.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          candidate="${{ steps.revs.outputs.candidate }}"
+          mirror="${{ steps.revs.outputs.mirror }}"
+
+          mkdir -p /tmp/eden-probe
+          git -C /tmp/eden-probe init -q
+          git -C /tmp/eden-probe remote add origin "$mirror"
+          git -C /tmp/eden-probe fetch -q --depth 1 origin "$candidate"
+          git -C /tmp/eden-probe checkout -q FETCH_HEAD
+          git -C /tmp/eden-probe config user.name "eden-for-mali"
+          git -C /tmp/eden-probe config user.email "eden-for-mali@localhost"
+
+          failed=""
+          while read -r patch; do
+            case "${patch}" in ''|\#*) continue ;; esac
+            if git -C /tmp/eden-probe am --keep-non-patch "${GITHUB_WORKSPACE}/patches/${patch}"; then
+              echo "  ok   ${patch}"
+            else
+              git -C /tmp/eden-probe am --abort || true
+              echo "  FAIL ${patch}"
+              failed="${patch}"
+              break
+            fi
+          done < patches/series
+
+          if [ -n "$failed" ]; then
+            echo "applies=false" >> "$GITHUB_OUTPUT"
+            echo "failed=$failed" >> "$GITHUB_OUTPUT"
+          else
+            echo "applies=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report a patch that no longer applies
+        if: steps.revs.outputs.changed == 'true' && steps.test.outputs.applies == 'false'
+        run: |
+          {
+            echo "### Eden moved, but the patch series no longer applies"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| pinned | \`${{ steps.revs.outputs.current }}\` |"
+            echo "| candidate | \`${{ steps.revs.outputs.candidate }}\` |"
+            echo "| first failing patch | \`${{ steps.test.outputs.failed }}\` |"
+            echo
+            echo "The pin was left alone, so the published APK still matches the"
+            echo "patches in this repository. Rebase that patch, then re-run this"
+            echo "workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning title=Patch series needs a rebase::${{ steps.test.outputs.failed }} does not apply to ${{ steps.revs.outputs.candidate }}; the Eden pin was not moved."
+
+      - name: Move the pin and start a build
+        if: steps.revs.outputs.changed == 'true' && steps.test.outputs.applies == 'true' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidate="${{ steps.revs.outputs.candidate }}"
+          today=$(date -u '+%Y-%m-%d')
+
+          sed -i -E "s/^EDEN_COMMIT=.*/EDEN_COMMIT=${candidate}/" eden-source.pin
+          sed -i -E "s/^EDEN_COMMIT_DATE=.*/EDEN_COMMIT_DATE=${today}/" eden-source.pin
+          git diff --stat
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add eden-source.pin
+          # Separate -m flags become paragraphs, which keeps the message out of
+          # the YAML block scalar's indentation.
+          git commit \
+            -m "Move the Eden pin to ${candidate:0:9}" \
+            -m "The whole patch series was applied against this revision before the pin moved, so the tree this builds from is the one that was tested." \
+            -m "Raised automatically by .github/workflows/update-eden.yml."
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+          # A push made with GITHUB_TOKEN does not raise workflow events, so the
+          # build has to be asked for explicitly.
+          for preset in armv9-x925 custom; do
+            gh workflow run build-apk.yml --repo "$GITHUB_REPOSITORY" \
+              --ref "$GITHUB_REF_NAME" \
+              -f preset="$preset" -f build_type=Release -f flavor=standard
+            echo "requested a build for $preset"
+          done
+
+          {
+            echo "### Eden pin moved to \`${candidate:0:9}\`"
+            echo
+            echo "The patch series applied cleanly. Builds were started for"
+            echo "\`armv9-x925\` and \`custom\`; each publishes to its own release."
+          } >> "$GITHUB_STEP_SUMMARY"

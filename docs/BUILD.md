@@ -36,8 +36,27 @@ preset, build type and flavor. The workflow:
 4. clones the pinned Eden commit and applies `patches/` with `git am`,
 5. runs Eden's own `.ci/android/build.sh`,
 6. uploads `artifacts/*.apk` and `artifacts/*.aab` as a workflow artifact,
-7. publishes them to a GitHub Release tagged `apk-<preset>-<build-type>`,
-   renamed to `eden-mali-<preset>-<build-type>-<eden-commit>.apk`.
+7. publishes them to a GitHub Release tagged `apk-<preset>-<build-type>`, under
+   two names: a versioned
+   `eden-mali-<preset>-<build-type>-eden<eden commit>-r<repo commit>.apk`, and a
+   fixed `eden-mali-<preset>-latest.apk` that gives a permanent download URL.
+
+## Staying current with upstream Eden
+
+`update-eden.yml` runs every Monday at 03:00 UTC, and can be dispatched by hand
+with an explicit ref or as a dry run. It:
+
+1. resolves the newest Eden revision and compares it to `eden-source.pin`,
+2. clones that revision and applies the whole patch series to it,
+3. **only if every patch applies**, moves the pin, commits, and dispatches builds
+   for `armv9-x925` and `custom`.
+
+If a patch fails it stops, leaves the pin untouched, and names the failing patch
+in the run summary. Rebase that patch and re-run.
+
+A push made with `GITHUB_TOKEN` does not raise workflow events, so the update job
+asks for the builds explicitly rather than relying on the pin change to trigger
+them.
 
 The release is a rolling one: re-running the workflow with the same preset and
 build type replaces the assets on that tag rather than creating a new release.
