@@ -63,6 +63,12 @@ the matching release and also uploaded as a workflow artifact. The APK is signed
 with Eden's checked-in debug key, so it installs alongside an official Eden
 build rather than replacing it.
 
+> **Installing over an official Eden fails.** These builds use the same
+> `applicationId` as an official Eden but a different signing key, so Android
+> refuses the update. Uninstall the existing Eden first, or run the build with
+> the **`coexist`** option to get an *Eden Nightly* that installs alongside it.
+> See [`docs/BUILD.md`](docs/BUILD.md).
+
 Attaching to a release needs the repository's Actions token to be writable
 (**Settings → Actions → General → Workflow permissions → Read and write
 permissions**). Without it the build still succeeds and the APK is still

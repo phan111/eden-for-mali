@@ -133,9 +133,22 @@ Hyphens are stripped from the preset because the overlay splits on the first one
 ## Signing
 
 With no `ANDROID_KEYSTORE_B64` set, Eden's build signs with the debug keystore
-checked into `src/android/app/debug.keystore`. That APK installs fine and, thanks
-to Eden's `applicationIdSuffix`, sits alongside an official Eden install rather
-than replacing it. To sign with your own key, set `ANDROID_KEYSTORE_B64`,
+checked into `src/android/app/debug.keystore`.
+
+### This replaces an installed Eden, unless you ask it not to
+
+A `Release` build takes `applicationId` `dev.eden.eden_emulator` — exactly what an
+official Eden uses — while being signed with the debug key instead of Eden's
+release key. Android treats that as an update from a different signer and refuses
+it: the installer offers *"Update this app?"* and then fails with *"App not
+installed"*. Uninstalling the existing Eden first is enough to get past it.
+
+To keep both, dispatch the build with **`coexist`** ticked. That passes
+`--nightly` to `.ci/android/build.sh`, which applies Eden's own `.nightly`
+`applicationIdSuffix` and names the app **Eden Nightly**, so the two install side
+by side. Those builds publish to their own `apk-<preset>-<build-type>-coexist`
+release with `-coexist` in the asset names, so they never overwrite the
+replacing build. To sign with your own key, set `ANDROID_KEYSTORE_B64`,
 `ANDROID_KEYSTORE_PASS` and `ANDROID_KEY_ALIAS` — Eden's `.ci/android/build.sh`
 picks them up.
 

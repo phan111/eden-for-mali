@@ -19,6 +19,10 @@ on:
         type: choice
         default: standard
         options: [standard, legacy, optimized]
+      coexist:
+        description: "Install alongside official Eden instead of replacing it"
+        type: boolean
+        default: false
   push:
     branches: [claude/gpu-mali-galaxy-tab-s11-3s6chv]
     # Deliberately excludes the workflow file itself: editing CI should not spend
@@ -44,6 +48,7 @@ jobs:
       PRESET: ${{ inputs.preset || 'armv9-x925' }}
       BUILD_TYPE: ${{ inputs.build_type || 'Release' }}
       FLAVOR: ${{ inputs.flavor || 'standard' }}
+      COEXIST: ${{ inputs.coexist && 'true' || 'false' }}
       # Pinned by src/android/app/build.gradle.kts (externalNativeBuild.cmake.version).
       CMAKE_VERSION: 3.31.6
       NDK_VERSION: 28.2.13676358
@@ -159,9 +164,17 @@ jobs:
           set -eux
           ccache -z || true
           chmod +x .ci/android/build.sh src/android/gradlew
+          # Eden's release build type takes applicationId dev.eden.eden_emulator,
+          # the same as an official build, so installing one replaces the other.
+          # --nightly adds the .nightly applicationIdSuffix and an "Eden Nightly"
+          # app name, which lets both sit on the device at once.
+          nightly=""
+          [ "${COEXIST}" = "true" ] && nightly="--nightly"
+          # shellcheck disable=SC2086
           ./.ci/android/build.sh \
             -t "${FLAVOR}" \
             -b "${BUILD_TYPE}" \
+            $nightly \
             -DYUZU_BUILD_PRESET="${PRESET}"
           ccache -s || true
 
@@ -198,8 +211,10 @@ jobs:
           set -eux
           eden_commit="$(sed -n 's/^EDEN_COMMIT=//p' eden-source.pin)"
           eden_short="${eden_commit:0:9}"
-          tag="apk-${PRESET}-${BUILD_TYPE}"
-          title="Eden Mali APK - ${PRESET} (${BUILD_TYPE})"
+          variant=""
+          [ "${COEXIST}" = "true" ] && variant="-coexist"
+          tag="apk-${PRESET}-${BUILD_TYPE}${variant}"
+          title="Eden Mali APK - ${PRESET} (${BUILD_TYPE}${variant})"
 
           # Name the assets after what they actually are, not "app-mainline-release".
           # The name carries this repository's commit as well as Eden's: two builds
@@ -214,8 +229,8 @@ jobs:
             [ -e "$f" ] || continue
             ext="${f##*.}"
             cp "$f" \
-              "release/eden-mali-${PRESET}-${BUILD_TYPE}-eden${eden_short}-r${repo_short}.${ext}"
-            cp "$f" "release/eden-mali-${PRESET}-latest.${ext}"
+              "release/eden-mali-${PRESET}${variant}-${BUILD_TYPE}-eden${eden_short}-r${repo_short}.${ext}"
+            cp "$f" "release/eden-mali-${PRESET}${variant}-latest.${ext}"
           done
           ls -lh release/
 
@@ -232,10 +247,18 @@ jobs:
             echo "| built | $(date -u '+%Y-%m-%d %H:%M') UTC |"
             echo
             echo "Permanent link, always the newest build of this preset:"
-            echo "\`eden-mali-${PRESET}-latest.apk\` below."
+            echo "\`eden-mali-${PRESET}${variant}-latest.apk\` below."
             echo
-            echo "Signed with Eden's checked-in debug key, so it installs alongside an"
-            echo "official Eden build instead of replacing it."
+            if [ "${COEXIST}" = "true" ]; then
+              echo "Installs **alongside** an official Eden: the applicationId is"
+              echo "\`dev.eden.eden_emulator.nightly\` and the app is named **Eden Nightly**."
+            else
+              echo "**This replaces an installed Eden.** The applicationId is"
+              echo "\`dev.eden.eden_emulator\`, the same as an official build, and this one"
+              echo "is signed with Eden's checked-in debug key rather than their release key,"
+              echo "so Android refuses it as an update - uninstall the existing Eden first."
+              echo "Build with the \`coexist\` option to keep both."
+            fi
             echo
             if [ "${PRESET}" = "armv9-x925" ] || [ "${PRESET}" = "armv9" ]; then
               echo "**This build requires Armv9 hardware** (Galaxy Tab S11, Dimensity 9400+ and"
